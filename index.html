@@ -54,93 +54,88 @@ Error generating stack: `+i.message+`
   <script>(function(){function m(a){var h=a.getAttribute("href");if(!h)return;try{var u=new URL(h,document.baseURI);if((u.protocol==="http:"||u.protocol==="https:")&&u.host!==location.host){a.target="_blank";a.rel="noopener noreferrer";}}catch(e){}}function s(){document.querySelectorAll("a[href]").forEach(m);}if(document.readyState!=="loading"){s();}else{document.addEventListener("DOMContentLoaded",s);}document.addEventListener("click",function(e){var a=e.target&&e.target.closest&&e.target.closest("a[href]");if(a){m(a);}},true);})();</script>
   
 
-<!-- FIREBASE BACKEND - SIMPLE COMPAT VERSION - NO DESIGN CHANGE -->
+<!-- FIREBASE - EXTENSION SAFE - NO LISTENER -->
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 <script>
-// Your Firebase Config - robot-trading-d49e1
 const firebaseConfig = {
   apiKey: "AIzaSyABi2dSXG4ExjAuUho5bDNpYE3whvzDnY8",
   authDomain: "robot-trading-d49e1.firebaseapp.com",
   projectId: "robot-trading-d49e1",
   storageBucket: "robot-trading-d49e1.firebasestorage.app",
   messagingSenderId: "202098687322",
-  appId: "1:202098687322:web:e55aa52339f715608e8763",
-  measurementId: "G-WF707FJ0V8"
+  appId: "1:202098687322:web:e55aa52339f715608e8763"
+};
+let db=null;
+try{
+  firebase.initializeApp(firebaseConfig);
+  db=firebase.firestore();
+  console.log("✅ Firebase Connected - SAFE MODE");
+}catch(e){console.error(e);}
+
+window.syncUserToFirebase = function(u){
+  if(!db || !u || !u.username) return Promise.resolve();
+  return db.collection("robot_users").doc(u.username).set({
+    username: u.username,
+    password: u.password,
+    plan: u.plan,
+    expiry: u.expiry,
+    telegramId: u.telegramId || "",
+    whatsappNumber: u.whatsappNumber || "",
+    lastUpdated: new Date().toISOString()
+  },{merge:true}).then(()=>console.log("☁️ Saved:",u.username));
 };
 
-let db = null;
-let firebaseEnabled = false;
+window.syncAllNow = function(){
+  try{
+    const users = JSON.parse(localStorage.getItem("paid_users")||"[]");
+    console.log("Uploading", users.length, "users...");
+    return Promise.all(users.map(u=> window.syncUserToFirebase(u))).then(()=>{
+      console.log("✅ ALL SYNCED TO FIREBASE");
+      alert("✅ "+users.length+" users synced to Firebase!");
+    });
+  }catch(e){console.error(e);}
+};
 
-try {
-  firebase.initializeApp(firebaseConfig);
-  db = firebase.firestore();
-  firebaseEnabled = true;
-  console.log("✅ Firebase Connected - Project:", firebaseConfig.projectId);
-} catch(e) {
-  console.error("Firebase init failed:", e);
-}
-
-window.syncUserToFirebase = function(userObj) {
-  if(!firebaseEnabled || !db) return;
-  try {
-    db.collection("robot_users").doc(userObj.username).set({
-      ...userObj,
-      lastUpdated: new Date().toISOString(),
-      syncedAt: new Date().toISOString()
-    }, {merge: true}).then(()=> {
-      console.log("✅ User synced to Firebase:", userObj.username);
-    }).catch(err => console.error("Sync failed", err));
-  } catch(err) { console.error(err); }
-}
-
-window.loadUsersFromFirebase = function() {
-  if(!firebaseEnabled || !db) return;
-  db.collection("robot_users").get().then(snapshot => {
-    const users = [];
-    snapshot.forEach(doc => users.push(doc.data()));
-    if(users.length > 0) {
-      localStorage.setItem("paid_users", JSON.stringify(users));
-      console.log("✅ Loaded", users.length, "users from Firebase");
-    }
-  }).catch(err => console.error("Load failed", err));
-}
-
-// Override localStorage
-const originalSetItem = localStorage.setItem.bind(localStorage);
-localStorage.setItem = function(key, value) {
-  originalSetItem(key, value);
-  if(key === "paid_users" && firebaseEnabled) {
-    try {
-      const users = JSON.parse(value);
-      if(Array.isArray(users)) {
-        users.forEach(u => window.syncUserToFirebase(u));
+// Auto sync when paid_users changes
+const _setItem = localStorage.setItem.bind(localStorage);
+localStorage.setItem = function(k,v){
+  _setItem(k,v);
+  if(k==="paid_users" && db){
+    try{
+      const arr = JSON.parse(v);
+      if(Array.isArray(arr) && arr.length>0){
+        const last = arr[arr.length-1];
+        if(last && last.username) window.syncUserToFirebase(last);
       }
-    } catch(e) {}
+    }catch(e){}
   }
-}
+};
 
-// Load on start
-window.addEventListener('load', () => {
-  if(firebaseEnabled) {
-    setTimeout(() => {
-      window.loadUsersFromFirebase();
-      // Realtime listener
-      try {
-        db.collection("robot_users").onSnapshot(snapshot => {
-          const users = [];
-          snapshot.forEach(d => users.push(d.data()));
-          if(users.length > 0) {
-            localStorage.setItem("paid_users", JSON.stringify(users));
-            console.log("🔄 Real-time update -", users.length, "users");
-          }
-        });
-      } catch(e) {}
-    }, 2000);
-  }
+// On load, merge cloud into local ONCE (no realtime)
+window.addEventListener('load', ()=>{
+  if(!db) return;
+  setTimeout(()=>{
+    db.collection("robot_users").get().then(snap=>{
+      const cloud=[];
+      snap.forEach(d=> cloud.push(d.data()));
+      if(cloud.length>0){
+        const local = JSON.parse(localStorage.getItem("paid_users")||"[]");
+        const map = new Map();
+        [...local, ...cloud].forEach(u=>{ if(u.username) map.set(u.username, {...(map.get(u.username)||{}), ...u}) });
+        const merged = Array.from(map.values());
+        if(merged.length !== local.length){
+          localStorage.setItem("paid_users", JSON.stringify(merged));
+          console.log("✅ Merged", merged.length, "users - reloading...");
+          setTimeout(()=> location.reload(), 1000);
+        } else {
+          console.log("✅ Already in sync:", merged.length, "users");
+        }
+      }
+    }).catch(e=> console.log("Firebase load skipped:", e.message));
+  }, 2000);
 });
 </script>
-<!-- END FIREBASE -->
 
 </body>
 </html>
