@@ -53,5 +53,127 @@ Error generating stack: `+i.message+`
 </script>
   <script>(function(){function m(a){var h=a.getAttribute("href");if(!h)return;try{var u=new URL(h,document.baseURI);if((u.protocol==="http:"||u.protocol==="https:")&&u.host!==location.host){a.target="_blank";a.rel="noopener noreferrer";}}catch(e){}}function s(){document.querySelectorAll("a[href]").forEach(m);}if(document.readyState!=="loading"){s();}else{document.addEventListener("DOMContentLoaded",s);}document.addEventListener("click",function(e){var a=e.target&&e.target.closest&&e.target.closest("a[href]");if(a){m(a);}},true);})();</script>
   
+
+<!-- FIREBASE BACKEND - ADDED WITHOUT CHANGING DESIGN -->
+<script type="module">
+// Import Firebase
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getFirestore, collection, addDoc, getDocs, query, where, updateDoc, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+// ===== FIREBASE CONFIG - ROBOT TRADING =====
+const firebaseConfig = {
+  apiKey: "AIzaSyABi2dSXG4ExjAuUho5bDNpYE3whvzDnY8",
+  authDomain: "robot-trading-d49e1.firebaseapp.com",
+  projectId: "robot-trading-d49e1",
+  storageBucket: "robot-trading-d49e1.firebasestorage.app",
+  messagingSenderId: "202098687322",
+  appId: "1:202098687322:web:e55aa52339f715608e8763",
+  measurementId: "G-WF707FJ0V8"
+};
+// ===========================================
+
+let db = null;
+let firebaseEnabled = false;
+
+try {
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  if(firebaseConfig.apiKey !== "YOUR_API_KEY") {
+    firebaseEnabled = true;
+    console.log("✅ Firebase Connected - Data will sync to your dashboard");
+  } else {
+    console.log("⚠️ Firebase config not set - running in localStorage mode only");
+  }
+} catch(e) {
+  console.log("Firebase not configured yet, using localStorage only", e);
+}
+
+// Function to sync paid_users to Firebase
+window.syncUserToFirebase = async function(userObj) {
+  if(!firebaseEnabled || !db) return;
+  try {
+    // Use username as doc ID to avoid duplicates
+    const userRef = doc(db, "robot_users", userObj.username);
+    await setDoc(userRef, {
+      ...userObj,
+      lastUpdated: new Date().toISOString(),
+      syncedAt: new Date().toISOString()
+    }, { merge: true });
+    console.log("✅ User synced to Firebase:", userObj.username);
+  } catch(err) {
+    console.error("Firebase sync failed:", err);
+  }
+}
+
+// Function to get all users from Firebase and update localStorage
+window.loadUsersFromFirebase = async function() {
+  if(!firebaseEnabled || !db) return [];
+  try {
+    const q = collection(db, "robot_users");
+    const snapshot = await getDocs(q);
+    const users = [];
+    snapshot.forEach((docSnap) => {
+      users.push(docSnap.data());
+    });
+    if(users.length > 0) {
+      localStorage.setItem("paid_users", JSON.stringify(users));
+      console.log("✅ Loaded", users.length, "users from Firebase");
+    }
+    return users;
+  } catch(err) {
+    console.error("Failed to load from Firebase:", err);
+    return [];
+  }
+}
+
+// Override localStorage.setItem for paid_users to auto-sync
+const originalSetItem = localStorage.setItem.bind(localStorage);
+localStorage.setItem = function(key, value) {
+  originalSetItem(key, value);
+  if(key === "paid_users" && firebaseEnabled) {
+    try {
+      const users = JSON.parse(value);
+      // Sync last user (new signup)
+      if(Array.isArray(users) && users.length > 0) {
+        const lastUser = users[users.length - 1];
+        window.syncUserToFirebase(lastUser);
+        // Also sync all for safety
+        users.forEach(u => window.syncUserToFirebase(u));
+      }
+    } catch(e) {}
+  }
+}
+
+// On page load, try to load from Firebase
+window.addEventListener('load', async () => {
+  if(firebaseEnabled) {
+    // Small delay to let original app init first
+    setTimeout(async () => {
+      await window.loadUsersFromFirebase();
+      // Show small status in console only, no UI change
+      console.log("🔄 Firebase sync active - data will appear on all devices");
+    }, 2000);
+  }
+});
+
+// Realtime listener - auto update when new user signs up from anywhere
+if(firebaseEnabled) {
+  setTimeout(() => {
+    try {
+      const colRef = collection(db, "robot_users");
+      onSnapshot(colRef, (snapshot) => {
+        const users = [];
+        snapshot.forEach(d => users.push(d.data()));
+        if(users.length > 0) {
+          localStorage.setItem("paid_users", JSON.stringify(users));
+          console.log("🔄 Real-time update -", users.length, "users");
+        }
+      });
+    } catch(e) {}
+  }, 2500);
+}
+</script>
+<!-- END FIREBASE BACKEND -->
+
 </body>
 </html>
